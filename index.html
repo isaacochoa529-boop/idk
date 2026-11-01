@@ -205,6 +205,39 @@ const CANDS=[[' the',41],[' a',22],[' Roses',14],[' Ode',9],[' In',6],[' banana'
 const OUT=['Roses',' are',' red',','," straw","berries",' too',',',' I',' am',' a',' large',' language',' model',',',' how',' about',' you','?'];
 const WORDS=[' hi',' so',' the',' code',' bug',' lol',' why',' pls',' fix',' it',' ok',' 🍓',' wait',' hmm',' yes',' no',' idk',' again',' poem',' cat'];
 const GHOSTS=['hello?','what was the task?','who said hi?','something about… poems?'];
+const RULES=['use readable names','never put secrets in code','keep functions small','tests pass before shipping'];
+const SKILL=['---','name: tidy-code','description: how we write code here','---',...RULES.map((r,i)=>`${i+1}. ${r}`)];
+const CODE=['// rules: SKILL.md','function count(word, ch) {','  let n = 0;','  for (const c of word) {','    if (c === ch) n++;','  }','  return n;','}','const KEY = "sk-live-9f2c81";','test(count("strawberry", "r") === 3);'];
+const FIXED='const KEY = process.env.API_KEY;';
+const OFFS=CODE.reduce((a,l,i)=>(a.push(i?a[i-1]+CODE[i-1].length+1:0),a),[]);
+const KW=/^(function|let|const|for|of|if|return)$/;
+function drawCode(str,x,y,fs,cw){
+  const re=/(\/\/.*$)|("[^"]*"?)|([A-Za-z_]\w*)|(\d+)|(\s+)|(.)/g; let m;
+  ctx.font=`${fs}px ${MONO}`; ctx.textAlign='left'; ctx.textBaseline='middle';
+  while((m=re.exec(str))){
+    const s=m[0]; let col=C.fg;
+    if(m[1])col=C.muted; else if(m[2])col=C.butter; else if(m[4])col=C.coral; else if(m[6])col=rgba(C.fg,.65);
+    else if(m[3])col=KW.test(s)?C.lilac:(str.slice(re.lastIndex).trimStart()[0]==='('?C.sky:C.fg);
+    if(!m[5]){ctx.fillStyle=col;ctx.fillText(s,x,y);}
+    x+=cw*s.length;
+  }
+}
+function panel(x,y,w,h,title){
+  rr(x,y,w,h,12); ctx.fillStyle='rgba(24,20,48,.92)'; ctx.fill(); ctx.strokeStyle=rgba(C.lilac,.3); ctx.lineWidth=1; ctx.stroke();
+  [C.coral,C.butter,C.mint].forEach((c,i)=>{ctx.fillStyle=c;ctx.beginPath();ctx.arc(x+16+i*14,y+17,4,0,7);ctx.fill();});
+  ctx.fillStyle=C.muted; ctx.font=`${Math.max(11,12*S)}px ${MONO}`; ctx.textAlign='left'; ctx.textBaseline='middle'; ctx.fillText(title,x+64,y+17);
+  ctx.strokeStyle=rgba(C.lilac,.15); ctx.beginPath(); ctx.moveTo(x,y+34); ctx.lineTo(x+w,y+34); ctx.stroke();
+}
+function ruleIcon(x,y,r,state){
+  ctx.lineWidth=Math.max(1.5,r*.24); ctx.lineCap='round'; ctx.lineJoin='round';
+  if(state==='run'){ctx.strokeStyle=C.butter;ctx.beginPath();ctx.arc(x,y,r,clock*8,clock*8+4.2);ctx.stroke();return;}
+  ctx.beginPath(); ctx.arc(x,y,r,0,7);
+  if(state==='pending'){ctx.strokeStyle=C.muted;ctx.stroke();return;}
+  ctx.fillStyle=state==='ok'?C.mint:C.coral; ctx.fill(); ctx.strokeStyle=C.ink; ctx.beginPath();
+  if(state==='ok'){ctx.moveTo(x-r*.45,y);ctx.lineTo(x-r*.1,y+r*.35);ctx.lineTo(x+r*.45,y-r*.35);}
+  else{ctx.moveTo(x-r*.35,y-r*.35);ctx.lineTo(x+r*.35,y+r*.35);ctx.moveTo(x+r*.35,y-r*.35);ctx.lineTo(x-r*.35,y+r*.35);}
+  ctx.stroke();
+}
 
 const scenes=[
 {name:'boot',
@@ -352,6 +385,73 @@ const scenes=[
     const ch=word[i], wob=panic&&!reduce?Math.sin(clock*9+i*1.3)*4*S:0;
     ctx.fillStyle=ch==='r'&&panic?C.coral:C.fg; ctx.fillText(ch,x0+cw*(i+.5),CY+wob);
   }
+ }},
+{name:'skills',
+ caps:["a skill just loaded 📜 it's a rulebook I read before I start working. rules are rules, bestie."],
+ enter(){this.pop=0;},
+ draw(t){
+  cornerOrb(); env.rate=.8; orb.mood=t<1.2?'wide':'normal'; orb.tlx=-.8;
+  const fs=clamp(17*S,12,19), lh=fs*1.9, w=Math.min(W*.88,560*Math.max(S,.8)), h=50+SKILL.length*lh+10;
+  const x=CX-w/2, a=ease(t/.8), y=CY-h/2-(1-a)*80*S, read=(t-1)/.9, done=read>SKILL.length+.6;
+  ctx.globalAlpha=a; panel(x,y,w,h,'SKILL.md');
+  SKILL.forEach((s,i)=>{
+    const ly=y+42+lh*(i+.5), vis=clamp(read-i+1); if(vis<=0) return;
+    if(i>=4&&Math.floor(read)===i){rr(x+8,ly-lh/2+2,w-16,lh-4,6);ctx.fillStyle=rgba(C.lilac,.16);ctx.fill();}
+    ctx.globalAlpha=a*vis; ctx.font=`${fs}px ${MONO}`; ctx.textAlign='left'; ctx.textBaseline='middle';
+    ctx.fillStyle=i<4?C.muted:C.fg; ctx.fillText(s,x+20,ly);
+    if(i>=4&&read>i+1.1) ruleIcon(x+w-24,ly,fs*.5,'ok');
+    ctx.globalAlpha=a;
+  });
+  ctx.globalAlpha=1;
+  orb.tly=clamp(read/SKILL.length)*2-1;
+  if(done){monoLabel('✓ skill loaded · 4 rules memorized',CX,y+h+22*S,1,C.mint);
+    if(!this.pop){this.pop=1;burst(CX,y+h,26,[C.mint,C.lilac,C.fg]);}}
+ }},
+{name:'coding',
+ caps:["can't count r's? fine. I'll write code that can ⌨️ one token at a time, top to bottom.","rule check! a secret key in the code 🙈 swapping it out. tests pass ✅ ship it 🚀"],
+ enter(){this.ship=0;},
+ draw(t){
+  cornerOrb(); env.rate=1.6;
+  const c1=this.capT[1], scanT=c1+.2, fixT=c1+1.8, testT=c1+3.4;
+  const total=OFFS[CODE.length-1]+CODE[CODE.length-1].length, typed=Math.max(0,(t-.4)*total/Math.max(2,c1-1.2));
+  const narrow=W<760, Wt=Math.min(W*.92,980*Math.max(S,.75)), edW=narrow?Wt:Wt*.6, rW=narrow?Wt:Wt*.37;
+  ctx.font=`20px ${MONO}`; const cw20=ctx.measureText('m').width;
+  const fs=Math.min(clamp(17*S,10,18),(edW-64)/(38*cw20/20)); ctx.font=`${fs}px ${MONO}`; const cw=ctx.measureText('m').width;
+  const lh=fs*1.7, edH=46+CODE.length*lh+12, rfs=clamp(15*S,11,17), rowH=rfs*2.3, rH=44+RULES.length*rowH+rowH*1.2;
+  let ex,ey,rx,ry;
+  if(narrow){const tot=edH+14+rH;ex=CX-Wt/2;ey=Math.max(TOP+4,CY-tot/2);rx=ex;ry=ey+edH+14;}
+  else{ex=CX-Wt/2;ey=CY-Math.max(edH,rH)/2;rx=ex+edW+Wt*.03;ry=ey;}
+  ctx.globalAlpha=ease(t/.6);
+  panel(ex,ey,edW,edH,'count.js'); panel(rx,ry,rW,rH,'rule check');
+  ctx.save(); ctx.translate(ex+edW-22,ey+17+Math.sin(clock*3)*2); ctx.rotate(Math.sin(clock*2)*.2);
+  ctx.font=`18px ${DISP}`; ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillText('🦆',0,0); ctx.restore();
+  const scanLine=(t-scanT)/1.2*CODE.length, flagged=scanLine>=8.5, fixedOk=t>fixT+1.1;
+  for(let i=0;i<CODE.length;i++){
+    const ly=ey+46+lh*(i+.5), cx0=ex+16+cw*3.2; let s=CODE[i], n=clamp(Math.floor(typed-OFFS[i]),0,s.length), cur=typed>=OFFS[i]&&typed<OFFS[i]+s.length+1;
+    if(i===8&&t>fixT){
+      if(t<fixT+.4) n=Math.floor(s.length*(1-(t-fixT)/.4)); else {s=FIXED;n=Math.floor(clamp((t-fixT-.4)/.7)*s.length);}
+      cur=t<fixT+1.2;
+      const ha=.22*(1-clamp((t-fixT-1.2)/1)); if(ha>0){rr(ex+6,ly-lh/2,edW-12,lh,4);ctx.fillStyle=rgba(C.mint,ha);ctx.fill();}
+    } else if(i===8&&flagged){rr(ex+6,ly-lh/2,edW-12,lh,4);ctx.fillStyle=rgba(C.coral,.18+.12*Math.sin(clock*8));ctx.fill();}
+    ctx.fillStyle=rgba(C.muted,.6); ctx.font=`${fs}px ${MONO}`; ctx.textAlign='right'; ctx.textBaseline='middle'; ctx.fillText(String(i+1),ex+16+cw*2,ly);
+    if(n>0) drawCode(s.slice(0,n),cx0,ly,fs,cw);
+    if(cur&&Math.floor(clock*3)%2===0){ctx.fillStyle=C.lilac;ctx.fillRect(cx0+cw*n,ly-fs*.6,cw*.55,fs*1.2);}
+  }
+  if(scanLine>0&&scanLine<CODE.length){const sy=ey+46+scanLine*lh;ctx.fillStyle=rgba(C.lilac,.12);ctx.fillRect(ex+1,sy-lh,edW-2,lh);ctx.fillStyle=C.lilac;ctx.fillRect(ex+1,sy,edW-2,2);}
+  const st=[typed>=OFFS[2]?'ok':'pending', !flagged?'pending':fixedOk?'ok':'bad', typed>=OFFS[8]?'ok':'pending', t<testT?'pending':t<testT+.9?'run':'ok'];
+  RULES.forEach((r,i)=>{
+    const ly=ry+44+rowH*(i+.5), sh=st[i]==='bad'&&!reduce?Math.sin(clock*30)*2:0;
+    ruleIcon(rx+22+sh,ly,rfs*.55,st[i]);
+    ctx.fillStyle=st[i]==='bad'?C.coral:st[i]==='ok'?C.fg:C.muted; ctx.font=`${rfs}px ${MONO}`; ctx.textAlign='left'; ctx.textBaseline='middle';
+    ctx.fillText(r,rx+40+sh,ly);
+  });
+  const sy=ry+44+rowH*RULES.length+rowH*.5;
+  ctx.font=`${rfs}px ${MONO}`; ctx.textAlign='left';
+  ctx.fillStyle=st[3]==='ok'?C.mint:st[3]==='run'?C.butter:C.muted;
+  ctx.fillText(st[3]==='ok'?'✓ 1 passing · r count = 3 (finally)':st[3]==='run'?'running tests…':'tests: waiting',rx+16,sy);
+  ctx.globalAlpha=1;
+  if(st[3]==='ok'&&!this.ship){this.ship=1;burst(rx+rW/2,sy,34,PAL,1.3);}
+  orb.mood=st[1]==='bad'?'wide':st[3]==='ok'?'closed':'normal'; orb.shake=st[1]==='bad'?.5:0; orb.tlx=-1; orb.tly=.6;
  }},
 {name:'context',
  caps:["the context window is filling up 📦 the start of this chat is fading… wait, who said hello?"],
