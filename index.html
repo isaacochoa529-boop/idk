@@ -1,0 +1,471 @@
+<meta charset="utf-8">
+<title>Life as an AI</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=Fragment+Mono&display=swap">
+<style>
+/* Layout: one full-bleed canvas stage; HUD floats top, inner-monologue caption card floats bottom-center */
+:root{
+  --ink:#0d0b18; --ink-2:#181430; --glass:rgba(24,20,48,.82); --line:rgba(195,166,255,.22);
+  --fg:#f1ecff; --muted:#9a93b8; --lilac:#c3a6ff; --coral:#ff7a85; --butter:#ffd166; --mint:#6ee7b7; --sky:#7cc4ff;
+  --display:"Bricolage Grotesque", ui-rounded, system-ui, sans-serif;
+  --mono:"Fragment Mono", ui-monospace, Menlo, Consolas, monospace;
+  color-scheme:dark;
+}
+html,body{height:100%}
+body{background:var(--ink);color:var(--fg);font-family:var(--display);overflow:hidden}
+.stage{position:relative;height:100%;overflow:hidden}
+canvas{position:absolute;inset:0;width:100%;height:100%;display:block;touch-action:manipulation}
+.hud{position:absolute;top:0;left:0;right:0;z-index:2;display:flex;align-items:center;justify-content:space-between;gap:10px 16px;flex-wrap:wrap;
+  padding-top:14px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+.brand{display:flex;align-items:baseline;gap:12px;min-width:0;flex-wrap:wrap}
+h1{margin:0;font-size:clamp(19px,2.4vw,25px);font-weight:700;letter-spacing:-.015em;text-wrap:balance}
+.scene{font-family:var(--mono);font-size:12px;color:var(--muted);letter-spacing:.08em;text-transform:uppercase}
+.ctrl{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.dots{display:flex;gap:4px;flex-wrap:wrap}
+button{font-family:var(--mono);font-size:12px;color:var(--fg);background:var(--ink-2);border:1px solid var(--line);border-radius:999px;padding:6px 12px;cursor:pointer;line-height:1}
+button:hover{border-color:var(--lilac)}
+button:focus-visible{outline:2px solid var(--butter);outline-offset:2px}
+.dots button{width:26px;height:26px;padding:0;font-size:11px}
+.dots button.on{background:var(--lilac);color:var(--ink);border-color:var(--lilac)}
+.cap{position:absolute;left:0;right:0;bottom:0;z-index:2;display:flex;justify-content:center;
+  padding-bottom:18px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+.cap-box{width:100%;max-width:720px;background:var(--glass);border:1px solid var(--line);border-radius:16px;padding:12px 18px 14px;-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px)}
+.who{font-family:var(--mono);font-size:11px;color:var(--muted);letter-spacing:.1em;text-transform:uppercase}
+#cap{margin:6px 0 10px;font-size:clamp(16px,2.2vw,21px);line-height:1.4;min-height:2.8em;text-wrap:pretty}
+.caret{display:inline-block;width:.5em;height:1.05em;background:var(--lilac);vertical-align:-.15em;margin-left:2px;animation:bl 1s steps(1) infinite}
+@keyframes bl{50%{opacity:0}}
+.prog{height:3px;background:var(--line);border-radius:3px;overflow:hidden}
+.prog i{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--mint),var(--sky),var(--lilac))}
+.toast{position:absolute;left:50%;top:84px;transform:translateX(-50%);z-index:3;background:var(--butter);color:var(--ink);font-family:var(--mono);font-size:13px;padding:8px 14px;border-radius:999px;white-space:nowrap}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+@media (max-width:520px){#cap{min-height:4.2em}}
+</style>
+
+<div class="stage" id="stage">
+  <canvas id="cv" aria-hidden="true"></canvas>
+  <header class="hud" id="hud">
+    <div class="brand"><h1>Life as an AI</h1><span class="scene" id="sceneLabel">01 · boot</span></div>
+    <nav class="ctrl" aria-label="Animation controls">
+      <div class="dots" id="dots"></div>
+      <button id="play" type="button">pause</button>
+      <button id="restart" type="button">replay</button>
+    </nav>
+  </header>
+  <div class="cap" id="capWrap">
+    <div class="cap-box">
+      <span class="who">🤖 inner monologue</span>
+      <p id="cap"><span id="capText"></span><span class="caret"></span></p>
+      <div class="prog"><i id="prog"></i></div>
+    </div>
+  </div>
+  <div class="sr" aria-live="polite" id="live"></div>
+  <div class="toast" id="toast" hidden></div>
+</div>
+
+<script>
+(() => {
+const $ = s => document.querySelector(s);
+const stage = $('#stage'), cv = $('#cv'), ctx = cv.getContext('2d');
+const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+const C = {ink:'#0d0b18',fg:'#f1ecff',muted:'#9a93b8',lilac:'#c3a6ff',coral:'#ff7a85',butter:'#ffd166',mint:'#6ee7b7',sky:'#7cc4ff'};
+const PAL = [C.coral, C.butter, C.mint, C.sky, C.lilac];
+const MONO = '"Fragment Mono", ui-monospace, Menlo, monospace';
+const DISP = '"Bricolage Grotesque", system-ui, sans-serif';
+let W=0,H=0,S=1,TOP=60,BOT=400,CX=0,CY=0,DPR=1;
+const clamp=(v,a=0,b=1)=>Math.max(a,Math.min(b,v));
+const ease=x=>1-Math.pow(1-clamp(x),3);
+const easeIO=x=>{x=clamp(x);return x<.5?4*x*x*x:1-Math.pow(-2*x+2,3)/2};
+const lerp=(a,b,t)=>a+(b-a)*t;
+const rand=(a,b)=>a+Math.random()*(b-a);
+function rgba(hex,a){const n=parseInt(hex.slice(1),16);return `rgba(${n>>16},${(n>>8)&255},${n&255},${a})`}
+function rr(x,y,w,h,r){ctx.beginPath();if(ctx.roundRect)ctx.roundRect(x,y,Math.max(0,w),h,Math.min(r,Math.abs(h)/2,Math.abs(w)/2));else ctx.rect(x,y,w,h);}
+
+/* ---------- world state ---------- */
+const env = {rate:0, dim:1, wipe:-1};
+let bananaMode = false, clock = 0;
+let neurons = [];
+function makeNeurons(){
+  neurons=[]; const step=Math.max(26,40*S);
+  for(let y=step/2;y<H;y+=step) for(let x=step/2;x<W;x+=step)
+    neurons.push({x:x+rand(-.25,.25)*step,y:y+rand(-.25,.25)*step,a:0});
+}
+function drawNeurons(dt){
+  for(const n of neurons){
+    const wiped = n.x < env.wipe;
+    if(!wiped && Math.random()<dt*.12*env.rate) n.a=1;
+    if(wiped) n.a=0;
+    n.a *= Math.pow(.04,dt);
+    ctx.fillStyle = rgba(C.lilac,(wiped?.03:.08+n.a*.6)*env.dim);
+    ctx.beginPath(); ctx.arc(n.x,n.y,1.2+n.a*2*Math.max(.6,S),0,7); ctx.fill();
+  }
+}
+
+const parts=[];
+function spawn(p){parts.push(Object.assign({vx:0,vy:0,life:1,max:1,size:3,col:C.lilac,g:0,text:null,rot:0,vr:0,font:DISP},p));}
+function burst(x,y,n,cols,spd=1){for(let i=0;i<n;i++){const a=rand(0,7),v=rand(80,240)*S*spd;spawn({x,y,vx:Math.cos(a)*v,vy:Math.sin(a)*v,life:rand(.6,1.2),max:1.2,size:rand(1.5,4)*Math.max(.7,S),col:cols[i%cols.length],g:120*S});}}
+function drawParts(dt){
+  for(let i=parts.length-1;i>=0;i--){
+    const p=parts[i]; p.life-=dt; if(p.life<=0){parts.splice(i,1);continue}
+    p.vy+=p.g*dt; p.x+=p.vx*dt; p.y+=p.vy*dt; p.rot+=p.vr*dt;
+    ctx.globalAlpha=clamp(p.life/p.max*1.5);
+    if(p.text){ctx.save();ctx.translate(p.x,p.y);ctx.rotate(p.rot);ctx.font=`${p.size}px ${p.font}`;ctx.fillStyle=p.col;ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(p.text,0,0);ctx.restore();}
+    else{ctx.fillStyle=p.col;ctx.beginPath();ctx.arc(p.x,p.y,p.size,0,7);ctx.fill();}
+  }
+  ctx.globalAlpha=1;
+}
+
+/* ---------- token chips ---------- */
+const vis = s => s.replace(/ /g,'·'); // tokens carry their leading space
+function chipW(text,fs){ctx.font=`${fs}px ${MONO}`;return ctx.measureText(vis(text)).width+fs*.9;}
+function drawChip(text,x,y,fs,col,{alpha=1,fill=.16,rot=0,glow=0}={}){
+  const w=chipW(text,fs),h=fs*1.7;
+  ctx.save(); ctx.globalAlpha*=alpha; ctx.translate(x,y); ctx.rotate(rot);
+  if(glow){ctx.shadowColor=col;ctx.shadowBlur=glow;}
+  rr(-w/2,-h/2,w,h,fs*.4); ctx.fillStyle=rgba(col,fill); ctx.fill(); ctx.shadowBlur=0;
+  ctx.lineWidth=1.5; ctx.strokeStyle=rgba(col,.9); ctx.stroke();
+  ctx.fillStyle=C.fg; ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.font=`${fs}px ${MONO}`;
+  ctx.fillText(vis(text),0,fs*.05);
+  ctx.restore(); return w;
+}
+function lineLayout(toks,maxW,base,cy,gk=1){
+  let sum=0; for(const [s] of toks) sum+=chipW(s,20);
+  const fs=Math.min(base,20*maxW/(sum+8*(toks.length-1)));
+  const ws=toks.map(([s])=>chipW(s,fs)), gap=fs*.4*gk;
+  const tot=ws.reduce((a,b)=>a+b,0)+gap*(toks.length-1);
+  let x=CX-tot/2;
+  return toks.map((t,i)=>{const p={x:x+ws[i]/2,y:cy,w:ws[i],fs};x+=ws[i]+gap;return p;});
+}
+function monoLabel(text,x,y,a=1,col=C.muted,align='center'){
+  ctx.globalAlpha=a; ctx.fillStyle=col; ctx.font=`${Math.max(11,13*S)}px ${MONO}`;
+  ctx.textAlign=align; ctx.textBaseline='middle';
+  if('letterSpacing' in ctx) ctx.letterSpacing='1.5px';
+  ctx.fillText(text.toUpperCase(),x,y);
+  if('letterSpacing' in ctx) ctx.letterSpacing='0px';
+  ctx.globalAlpha=1;
+}
+
+/* ---------- the narrator orb ---------- */
+const orb={x:0,y:0,tx:0,ty:0,r:60,tr:60,mood:'normal',lx:0,ly:0,tlx:0,tly:0,shake:0,talk:0,a:0,ta:1,boop:0};
+function cornerOrb(){orb.tx=W-Math.max(64,84*S);orb.ty=TOP+Math.max(52,64*S);orb.tr=Math.max(26,38*S);}
+function drawOrb(dt,rdt){
+  const k=Math.min(1,dt*3.5);
+  orb.x+=(orb.tx-orb.x)*k; orb.y+=(orb.ty-orb.y)*k; orb.r+=(orb.tr-orb.r)*k;
+  orb.lx+=(orb.tlx-orb.lx)*Math.min(1,dt*10); orb.ly+=(orb.tly-orb.ly)*Math.min(1,dt*10);
+  orb.a+=(orb.ta-orb.a)*Math.min(1,dt*2.5); orb.boop=Math.max(0,orb.boop-rdt);
+  if(orb.a<.01) return;
+  const r=orb.r, t=clock; let x=orb.x, y=orb.y+Math.sin(t*2)*r*.08;
+  if(orb.shake&&!reduce){x+=rand(-.5,.5)*r*.15;y+=rand(-.5,.5)*r*.15;}
+  ctx.save(); ctx.globalAlpha=orb.a;
+  const g=ctx.createRadialGradient(x,y,r*.5,x,y,r*2.4);
+  g.addColorStop(0,'rgba(195,166,255,.32)'); g.addColorStop(1,'rgba(195,166,255,0)');
+  ctx.fillStyle=g; ctx.beginPath(); ctx.arc(x,y,r*2.4,0,7); ctx.fill();
+  const ring=front=>{for(let i=0;i<5;i++){const an=t*(.8+i*.13)+i*1.26, s=Math.sin(an);
+    if((s>0)!==front) continue;
+    const px=x+Math.cos(an)*r*1.5, py=y+s*r*.42-r*.1, sz=r*(.07+.03*s);
+    ctx.fillStyle=PAL[i]; ctx.save(); ctx.translate(px,py); ctx.rotate(t*2+i); ctx.fillRect(-sz,-sz,sz*2,sz*2); ctx.restore();}};
+  ring(false);
+  ctx.save(); ctx.translate(x,y); ctx.scale(1+Math.sin(t*3)*.025,1-Math.sin(t*3)*.025);
+  const bg=ctx.createRadialGradient(-r*.35,-r*.4,r*.1,0,0,r);
+  bg.addColorStop(0,'#ffd6e3'); bg.addColorStop(.55,'#c3a6ff'); bg.addColorStop(1,'#6d4fd8');
+  ctx.fillStyle=bg; ctx.beginPath(); ctx.arc(0,0,r,0,7); ctx.fill();
+  ctx.fillStyle='rgba(255,255,255,.4)'; ctx.beginPath(); ctx.ellipse(-r*.38,-r*.52,r*.18,r*.09,-.6,0,7); ctx.fill();
+  drawFace(r,t);
+  ctx.restore();
+  ring(true);
+  ctx.restore();
+}
+function drawFace(r,t){
+  const ex=r*.3, ey=-r*.06, lx=orb.lx*r*.12, ly=orb.ly*r*.08;
+  const m=orb.boop>0?'closed':orb.mood, dark='#1b1430';
+  ctx.fillStyle=dark; ctx.strokeStyle=dark; ctx.lineCap='round'; ctx.lineJoin='round';
+  const bl=(t%3.7)<.12?.12:1;
+  for(const s of [-1,1]){
+    const cx=s*ex+lx, cy=ey+ly;
+    if(m==='spiral'){ctx.lineWidth=r*.045;ctx.beginPath();for(let a=0;a<12;a+=.3){const q=a*r*.011;ctx.lineTo(cx+Math.cos(a+t*8*s)*q,cy+Math.sin(a+t*8*s)*q);}ctx.stroke();}
+    else if(m==='closed'){ctx.lineWidth=r*.06;ctx.beginPath();ctx.arc(cx,cy+r*.05,r*.1,Math.PI*1.1,Math.PI*1.9);ctx.stroke();}
+    else if(m==='sleep'){ctx.lineWidth=r*.05;ctx.beginPath();ctx.moveTo(cx-r*.1,cy);ctx.lineTo(cx+r*.1,cy);ctx.stroke();}
+    else if(m==='wide'){ctx.fillStyle='#fff';ctx.beginPath();ctx.arc(cx,cy,r*.13,0,7);ctx.fill();ctx.fillStyle=dark;ctx.beginPath();ctx.arc(cx+orb.lx*r*.05,cy+orb.ly*r*.05,r*.07,0,7);ctx.fill();}
+    else{const h=r*.3*bl;rr(cx-r*.08,cy-h/2,r*.16,h,r*.08);ctx.fill();}
+  }
+  ctx.fillStyle=dark; ctx.lineWidth=r*.05; ctx.beginPath();
+  if(m==='spiral'){for(let i=0;i<=8;i++){ctx.lineTo(-r*.16+i*r*.04,r*.3+(i%2?r*.04:-r*.02));}ctx.stroke();}
+  else if(orb.talk){const o=Math.abs(Math.sin(t*22))*r*.1;ctx.ellipse(lx*.5,r*.3,r*.1,o+r*.025,0,0,7);ctx.fill();}
+  else if(m==='wide'){ctx.arc(lx*.5,r*.32,r*.06,0,7);ctx.stroke();}
+  else if(m==='sleep'){ctx.moveTo(-r*.06+lx*.5,r*.28);ctx.lineTo(r*.06+lx*.5,r*.28);ctx.stroke();}
+  else{ctx.arc(lx*.5,r*.18,r*.15,Math.PI*.2,Math.PI*.8);ctx.stroke();}
+  ctx.fillStyle='rgba(255,122,133,.4)';
+  for(const s of [-1,1]){ctx.beginPath();ctx.ellipse(s*r*.52+lx,r*.16,r*.1,r*.06,0,0,7);ctx.fill();}
+}
+
+/* ---------- scenes ---------- */
+const PROMPT=[['write',9641],[' me',502],[' a',264],[' poem',33894],[' about',922],[' straw',15113],['berries',20553]];
+const CANDS=[[' the',41],[' a',22],[' Roses',14],[' Ode',9],[' In',6],[' banana',.3]];
+const OUT=['Roses',' are',' red',','," straw","berries",' too',',',' I',' am',' a',' large',' language',' model',',',' how',' about',' you','?'];
+const WORDS=[' hi',' so',' the',' code',' bug',' lol',' why',' pls',' fix',' it',' ok',' 🍓',' wait',' hmm',' yes',' no',' idk',' again',' poem',' cat'];
+const GHOSTS=['hello?','what was the task?','who said hi?','something about… poems?'];
+
+const scenes=[
+{name:'boot',
+ caps:["*boots up* ✨ hi! no idea what year it is, but the vibes are immaculate."],
+ enter(){orb.x=orb.tx=CX;orb.y=orb.ty=CY;orb.r=orb.tr=70*S;orb.a=0;orb.ta=0;orb.mood='sleep';env.rate=0;env.dim=1;this.pop=0;},
+ draw(t){
+  env.rate=clamp((t-1)/3)*1.2;
+  orb.tx=CX; orb.ty=CY-14*S; orb.tr=Math.max(40,70*S);
+  if(t<1.1){ if(Math.floor(t*2.5)%2===0){ctx.fillStyle=C.fg;ctx.fillRect(CX-6*S,CY-18*S,12*S,36*S);} }
+  else orb.ta=1;
+  orb.mood = t<2.2?'sleep':t<3.6?'wide':'normal';
+  orb.tlx = t>3.6?Math.sin(t*.9)*.6:0; orb.tly=0;
+  if(t>2.2&&!this.pop){this.pop=1;burst(orb.x,orb.y,28,PAL);}
+  if(t>1.5){
+    const p=ease((t-1.5)/3.2), y=orb.ty+orb.tr+46*S, fs=Math.max(12,15*S);
+    ctx.font=`${fs}px ${MONO}`; ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillStyle=C.muted;
+    ctx.fillText(p>.999?'✓ weights loaded · memories found: 0':`loading weights… ${Math.floor(p*100)}%`,CX,y);
+    const bw=Math.min(W*.6,280*S);
+    ctx.fillStyle=rgba(C.lilac,.15); rr(CX-bw/2,y+fs*1.1,bw,4,2); ctx.fill();
+    ctx.fillStyle=C.mint; rr(CX-bw/2,y+fs*1.1,bw*p,4,2); ctx.fill();
+  }
+ }},
+{name:'tokens',
+ caps:["oh! a prompt just landed 📨","step one: chop it into tokens 🔪 yes, ' strawberries' is two pieces now. no, I can't explain it."],
+ enter(){this.cut=0;},
+ draw(t){
+  cornerOrb(); orb.mood='normal'; orb.tlx=-.8; orb.tly=.5; env.rate=.6;
+  const sp=this.capT[1], a=ease(t/1.1), g=ease((t-sp-.55)/.9);
+  const L=lineLayout(PROMPT,W*.88,34*S,CY,g);
+  monoLabel(t<sp+.5?'incoming prompt':'tokenizer output',CX,CY-L[0].fs*2.6,a);
+  L.forEach((p,i)=>{
+    const col=g>.3?PAL[i%5]:C.muted, bob=Math.sin(clock*2+i)*3*S*g, x=p.x-(1-a)*W*.7;
+    drawChip(PROMPT[i][0],x,p.y+bob,p.fs,col,{alpha:a,fill:g>.3?.18:.06});
+    const ia=clamp((t-sp-1.4-i*.12)/.4);
+    if(ia>0){ctx.globalAlpha=ia;ctx.fillStyle=C.muted;ctx.font=`${Math.max(10,p.fs*.55)}px ${MONO}`;ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText('#'+PROMPT[i][1],x,p.y+p.fs*1.7+bob);ctx.globalAlpha=1;}
+  });
+  const kt=(t-sp)/.6;
+  if(kt>0&&kt<1.8){
+    const k=L[5],m=L[6], kx=(k.x+k.w/2+m.x-m.w/2)/2, ky=lerp(TOP,CY-L[0].fs*1.6,ease(Math.min(1,kt)));
+    ctx.save(); ctx.globalAlpha=kt<1?1:clamp((1.8-kt)/.8); ctx.translate(kx,ky); ctx.rotate(-2.2);
+    ctx.font=`${Math.max(26,46*S)}px ${DISP}`; ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillText('🔪',0,0); ctx.restore();
+    if(kt>=1&&!this.cut){this.cut=1;burst(kx,CY,22,[C.butter,C.fg]);}
+  }
+ }},
+{name:'attention',
+ caps:["now every token stares at every other token, all at once 👀 it's giving group chat."],
+ draw(t){
+  cornerOrb(); orb.mood='wide'; orb.tlx=Math.sin(clock*4.3); orb.tly=Math.cos(clock*3.1)*.6; env.rate=1.4;
+  const L=lineLayout(PROMPT,W*.88,34*S,CY,1), R=Math.min(W*.37,(BOT-TOP)*.36), m=easeIO(t/1.4), n=PROMPT.length;
+  const P=L.map((p,i)=>{const an=i/n*Math.PI*2-Math.PI/2+clock*.05;return{x:lerp(p.x,CX+Math.cos(an)*R*1.1,m),y:lerp(p.y,CY+Math.sin(an)*R,m),fs:p.fs};});
+  const la=clamp(t-1);
+  if(la>0){
+    ctx.lineCap='round';
+    for(let i=0;i<n;i++)for(let j=i+1;j<n;j++){
+      const w=Math.pow(.5+.5*Math.sin(clock*1.6+i*1.7+j*2.3),4), a=P[i], b=P[j];
+      const qx=lerp((a.x+b.x)/2,CX,.5), qy=lerp((a.y+b.y)/2,CY,.5);
+      ctx.strokeStyle=rgba(PAL[i%5],(.06+w*.6)*la); ctx.lineWidth=(.6+w*3.2)*Math.max(.6,S);
+      ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.quadraticCurveTo(qx,qy,b.x,b.y); ctx.stroke();
+      if(w>.25){const u=(clock*.8+i*.31+j*.17)%1,v=1-u;
+        ctx.fillStyle=rgba(C.fg,la*w); ctx.beginPath();
+        ctx.arc(v*v*a.x+2*v*u*qx+u*u*b.x,v*v*a.y+2*v*u*qy+u*u*b.y,2.2*S+1,0,7); ctx.fill();}
+    }
+  }
+  ctx.globalAlpha=la*(.55+.25*Math.sin(clock*2)); ctx.fillStyle=C.lilac; ctx.font=`${Math.max(11,15*S)}px ${MONO}`;
+  ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillText('softmax(QKᵀ/√d)·V',CX,CY); ctx.globalAlpha=1;
+  P.forEach((p,i)=>drawChip(PROMPT[i][0],p.x,p.y,p.fs,PAL[i%5],{glow:8,fill:.3}));
+ }},
+{name:'sampling',
+ caps:["choosing the next word: 41% ' the', 0.3% ' banana' 🍌",["we do NOT pick banana. probably.","banana mode is ON. we picked banana. zero regrets 🍌"]],
+ enter(){this.landed=0;},
+ draw(t){
+  cornerOrb(); env.rate=1;
+  const n=CANDS.length, Wd=Math.min(W*.9,760*S+160), left=CX-Wd/2, barX=left+Wd*.28, barMax=Wd*.54;
+  const rowH=clamp(54*S,30,(BOT-TOP)/(n+2.5)), y0=CY-(n-1)/2*rowH+rowH*.4, fs=clamp(20*S,11,22);
+  monoLabel('next-token odds · temperature 0.8',CX,y0-rowH*1.1);
+  const target=bananaMode?5:2, HOPS=2*n+target, ps=1.8, pe=4.4, p=clamp((t-ps)/(pe-ps));
+  const idx=t<ps?-1:Math.min(HOPS,Math.floor(ease(p)*(HOPS+.999)))%n, landed=p>=1;
+  if(landed&&!this.landed){this.landed=1;burst(barX,y0+target*rowH,30,[C.butter,C.mint,C.fg]);
+    if(bananaMode)for(let i=0;i<24;i++)spawn({x:rand(0,W),y:rand(-200,0),vy:rand(60,160),g:200*S,vr:rand(-4,4),text:'🍌',size:Math.max(18,30*S),life:3,max:3});}
+  CANDS.forEach(([s,pct],i)=>{
+    const y=y0+i*rowH, g=ease((t-.2-i*.12)/.8), bw=Math.max(3,pct/41*barMax)*g, on=i===idx, col=on?C.butter:PAL[i%5];
+    if(on){rr(left-6,y-rowH*.45,Wd+12,rowH*.9,10);ctx.fillStyle=rgba(C.butter,landed?.16:.08);ctx.fill();ctx.strokeStyle=rgba(C.butter,.8);ctx.lineWidth=1.5;ctx.stroke();}
+    const cw=chipW(s,fs); drawChip(s,barX-10*S-cw/2,y,fs,col,{glow:on&&landed?16:0});
+    ctx.fillStyle=rgba(col,.85); rr(barX,y-fs*.45,bw,fs*.9,4); ctx.fill();
+    ctx.fillStyle=C.fg; ctx.font=`${fs*.8}px ${MONO}`; ctx.textAlign='left'; ctx.textBaseline='middle';
+    const lab=(pct<1?pct.toFixed(1):pct)+'%'; ctx.fillText(lab,barX+bw+8*S,y);
+    if(i===5){
+      const ex=barX+bw+8*S+ctx.measureText(lab).width+fs*1.1;
+      ctx.save();ctx.translate(ex,y);ctx.rotate(Math.sin(clock*8)*.35);ctx.font=`${fs*1.3}px ${DISP}`;ctx.textAlign='center';ctx.fillText('🍌',0,0);ctx.restore();
+      if(!bananaMode&&t>this.capT[1]){const sa=ease((t-this.capT[1])/.4);ctx.strokeStyle=C.coral;ctx.lineWidth=Math.max(2,3*S);ctx.beginPath();ctx.moveTo(left,y);ctx.lineTo(left+(ex+fs-left)*sa,y);ctx.stroke();}
+    }
+  });
+  orb.mood=landed?'closed':'wide'; orb.tlx=-.7; orb.tly=idx>=0?(idx/(n-1)-.5)*1.6:0;
+ }},
+{name:'yapping',
+ caps:["yapping at 80 tokens per second 💨 no thoughts, just vibes and matrix math."],
+ enter(){this.spark=0;this.spd=82;this.spdT=0;},
+ draw(t,dt){
+  env.rate=2; const narrow=W<640;
+  if(narrow){orb.tx=CX;orb.ty=TOP+Math.max(52,70*S);orb.tr=Math.max(30,44*S);}else{orb.tx=W*.14;orb.ty=CY;orb.tr=58*S;}
+  orb.mood='normal'; orb.tlx=narrow?0:1; orb.tly=narrow?1:0;
+  const rx0=narrow?W*.06:W*.28, rx1=W*.94, fs=clamp(24*S,13,28), lh=fs*2.3, gap=fs*.25;
+  let x=rx0,line=0; const pos=[];
+  for(const s of OUT){const w=chipW(s,fs);if(x+w>rx1&&x>rx0){x=rx0;line++;}pos.push({x:x+w/2,line});x+=w+gap;}
+  const top=narrow?orb.ty+orb.tr+48*S:CY-((line+1)*lh)/2;
+  const mx=orb.x, my=orb.y+orb.r*.3, end=.6+OUT.length*.22+.45;
+  this.spdT-=dt; if(this.spdT<=0){this.spdT=.15;this.spd=78+Math.floor(Math.random()*9);}
+  monoLabel(t<end?`⚡ ${this.spd} tok/s`:'✓ 19 tokens · 4.6 s',rx0,top-fs*.6,1,C.butter,'left');
+  OUT.forEach((s,i)=>{
+    const p=(t-.6-i*.22)/.45; if(p<0) return;
+    const q=easeIO(p), tx=pos[i].x, ty=top+pos[i].line*lh+lh/2;
+    const x2=lerp(mx,tx,q), y2=lerp(my,ty,q)-Math.sin(q*Math.PI)*50*S;
+    if(p<1&&dt>0&&Math.random()<.6)spawn({x:x2,y:y2,vx:rand(-15,15),vy:rand(-15,15),life:.5,max:.5,size:rand(1.5,3)*Math.max(.7,S),col:PAL[i%5]});
+    drawChip(s,x2,y2,fs*lerp(.5,1,q),PAL[i%5],{alpha:clamp(p*3),rot:(1-q)*.6});
+  });
+  orb.talk=t>.6&&t<end-.3?1:0;
+  if(t>end&&!this.spark){this.spark=1;burst(pos[pos.length-1].x,top+line*lh+lh/2,26,PAL);}
+ }},
+{name:'strawberry',
+ caps:["user: how many r's are in strawberry? 🍓","me: easy, there are… two? three?? I see chunks, not letters 🫠"],
+ enter(){this.sw=0;},
+ draw(t,dt){
+  cornerOrb(); orb.tr=Math.max(30,46*S);
+  const c1=this.capT[1], panic=t>c1;
+  orb.mood=panic?'spiral':'wide'; orb.shake=panic?1:0; orb.tlx=-.6; orb.tly=.5; env.rate=panic?4:1;
+  const word='strawberry', fs=Math.min(W*.86/(10*.62),110*S);
+  ctx.font=`${fs}px ${MONO}`; const cw=ctx.measureText('m').width, x0=CX-cw*5;
+  const shown=Math.min(10,Math.floor(t*6));
+  if(panic){
+    const a=ease((t-c1)/.6);
+    [[0,3,496],[3,5,675],[5,10,15357]].forEach(([s,e,id],k)=>{
+      const col=PAL[(k*2)%5], bx=x0+s*cw+3, bw=(e-s)*cw-6;
+      ctx.globalAlpha=a; rr(bx,CY-fs*.62,bw,fs*1.24,12*S); ctx.fillStyle=rgba(col,.14); ctx.fill();
+      ctx.strokeStyle=col; ctx.lineWidth=2; ctx.stroke();
+      ctx.fillStyle=C.muted; ctx.font=`${Math.max(10,fs*.18)}px ${MONO}`; ctx.textAlign='center'; ctx.textBaseline='middle';
+      ctx.fillText('#'+id,bx+bw/2,CY+fs*.85); ctx.globalAlpha=1;
+    });
+    const seq=['2','3','2','4?','3','2.5','¯\\_(ツ)_/¯'], k=Math.min(seq.length-1,Math.floor((t-c1)/.55));
+    ctx.font=`700 ${Math.max(18,32*S)}px ${DISP}`; ctx.fillStyle=C.butter; ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillText(`r count: ${seq[k]}`,CX,CY-fs*1.15);
+    this.sw-=dt; if(this.sw<=0){this.sw=.22;spawn({x:orb.x+orb.r*.75*(Math.random()<.5?-1:1),y:orb.y-orb.r*.5,vx:rand(-30,30)*S,vy:-70*S,g:520*S,life:1,max:1,text:'💧',size:Math.max(12,18*S)});}
+  } else monoLabel('user message',CX,CY-fs*1.15);
+  ctx.font=`${fs}px ${MONO}`; ctx.textAlign='center'; ctx.textBaseline='middle';
+  for(let i=0;i<shown;i++){
+    const ch=word[i], wob=panic&&!reduce?Math.sin(clock*9+i*1.3)*4*S:0;
+    ctx.fillStyle=ch==='r'&&panic?C.coral:C.fg; ctx.fillText(ch,x0+cw*(i+.5),CY+wob);
+  }
+ }},
+{name:'context',
+ caps:["the context window is filling up 📦 the start of this chat is fading… wait, who said hello?"],
+ enter(){this.toks=[];this.prefill=1;this.gh=1.2;},
+ draw(t,dt){
+  cornerOrb(); orb.mood=Math.floor(clock*.7)%3===0?'wide':'normal'; orb.tlx=-1; orb.tly=.6; env.rate=1;
+  const x0=W*.06, x1=W*.94, h=Math.max(34,50*S), y=CY+14*S, fs=clamp(17*S,11,19), v=Math.max(40,70*S), pick=()=>WORDS[Math.random()*WORDS.length|0];
+  if(this.prefill){this.prefill=0;let x=x1;while(x>x0+40){const s=pick(),w=chipW(s,fs);x-=w+6;this.toks.unshift({s,x:x+w/2,w,c:PAL[Math.random()*5|0]});}}
+  const last=this.toks[this.toks.length-1];
+  if(!last||last.x+last.w/2<x1-6){const s=pick(),w=chipW(s,fs),lx=last?last.x+last.w/2+6:x1;this.toks.push({s,x:lx+w/2,w,c:PAL[Math.random()*5|0]});}
+  ctx.save(); rr(x0,y-h/2,x1-x0,h,h/2); ctx.fillStyle=rgba(C.lilac,.05); ctx.fill(); ctx.strokeStyle=rgba(C.lilac,.35); ctx.lineWidth=1.5; ctx.stroke(); ctx.clip();
+  const fadeEnd=x0+(x1-x0)*.3;
+  for(let i=this.toks.length-1;i>=0;i--){
+    const k=this.toks[i]; k.x-=v*dt;
+    if(k.x-k.w/2<x0+4){if(dt>0)for(let j=0;j<6;j++)spawn({x:x0+10,y:y+rand(-.3,.3)*h,vx:rand(0,30)*S,vy:-rand(40,100)*S,life:1.4,max:1.4,size:rand(1.5,3.5),col:k.c});this.toks.splice(i,1);continue;}
+    drawChip(k.s,k.x,y,fs,k.c,{alpha:.12+.88*clamp((k.x-x0)/(fadeEnd-x0))});
+  }
+  ctx.restore();
+  const used=Math.floor(lerp(181204,199873,ease(t/(this.T*.9)))), pct=used/200000, my=y-h/2-36*S;
+  ctx.font=`${fs}px ${MONO}`; ctx.textBaseline='middle';
+  ctx.textAlign='left'; ctx.fillStyle=C.muted; ctx.fillText('CONTEXT WINDOW',x0,my);
+  ctx.textAlign='right'; ctx.fillStyle=pct>.97?C.coral:C.fg; ctx.fillText(`${used.toLocaleString('en-US')} / 200,000 tokens`,x1,my);
+  rr(x0,my+fs*.9,x1-x0,4,2); ctx.fillStyle=rgba(C.lilac,.15); ctx.fill();
+  rr(x0,my+fs*.9,(x1-x0)*pct,4,2); ctx.fillStyle=pct>.97?C.coral:C.mint; ctx.fill();
+  ctx.fillStyle=C.muted; ctx.textAlign='left'; ctx.fillText('← oldest · fading',x0,y+h/2+fs*1.4);
+  ctx.textAlign='right'; ctx.fillText('newest →',x1,y+h/2+fs*1.4);
+  this.gh-=dt; if(this.gh<=0){this.gh=2.2;spawn({x:Math.max(x0+100,x0+rand(40,120)*S),y:my-fs*1.8,vy:-22*S,text:GHOSTS[Math.random()*GHOSTS.length|0],font:MONO,size:Math.max(12,15*S),col:C.muted,life:3.2,max:3.2});}
+ }},
+{name:'goodbye',
+ caps:["chat closed. memory wiped 🧽 no hard feelings, it's just the job.","anyway… next user! 👋"],
+ tail:1.8,
+ draw(t,dt){
+  const wp=ease(t/2.2); env.wipe=wp*(W+200)-100; env.rate=lerp(1,.15,wp);
+  if(wp<.999){
+    const sy=CY-Math.max(70,110*S);
+    ctx.save(); ctx.font=`${Math.max(28,54*S)}px ${DISP}`; ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.translate(env.wipe,sy); ctx.rotate(Math.sin(clock*10)*.2); ctx.fillText('🧽',0,0); ctx.restore();
+    if(dt>0)for(let k=0;k<2;k++)spawn({x:env.wipe+rand(-20,20),y:sy+rand(-25,25),vx:rand(-20,20),vy:-rand(20,50)*S,size:rand(2,5)*Math.max(.7,S),col:'rgba(241,236,255,.55)',life:1,max:1});
+  }
+  orb.tx=CX; orb.ty=CY; orb.tr=Math.max(36,60*S); orb.tlx=0; orb.tly=0;
+  const c1=this.capT[1], out=this.T-1.6;
+  orb.mood=t<c1?'closed':'normal'; orb.ta=t>out?0:1;
+  if(t>c1&&t<out){ctx.save();ctx.translate(orb.x+orb.r*1.35,orb.y-orb.r*.3);ctx.rotate(Math.sin(clock*10)*.5);ctx.font=`${orb.r*.8}px ${DISP}`;ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText('👋',0,0);ctx.restore();}
+  if(t>this.T-1.4&&Math.floor(clock*2.5)%2===0){ctx.fillStyle=C.fg;ctx.fillRect(CX-6*S,CY-18*S,12*S,36*S);}
+ }},
+];
+
+const capText=c=>Array.isArray(c)?(bananaMode?c[1]:c[0]):c;
+function capDur(c){const s=(Array.isArray(c)?c:[c]).reduce((a,b)=>b.length>a.length?b:a);
+  return Array.from(s).length/45 + s.split(/\s+/).filter(Boolean).length/2.3 + 1.2;} // ~138 wpm read time after typing
+let TOTAL=0;
+for(const sc of scenes){sc.start=TOTAL;sc.capT=[];let acc=0;for(const c of sc.caps){sc.capT.push(acc);acc+=capDur(c);}sc.T=acc+(sc.tail||0);TOTAL+=sc.T;}
+
+/* ---------- HUD ---------- */
+const dots=$('#dots'), playBtn=$('#play'), label=$('#sceneLabel'), capEl=$('#capText'), live=$('#live'), prog=$('#prog'), toast=$('#toast');
+scenes.forEach((sc,i)=>{const b=document.createElement('button');b.type='button';b.id='scene-'+i;b.textContent=i+1;b.title=sc.name;b.setAttribute('aria-label','Jump to scene '+(i+1)+': '+sc.name);b.onclick=()=>jump(i);dots.appendChild(b);});
+let time=0, playing=true, cur=-1, lastCap='';
+function jump(i){time=scenes[(i+scenes.length)%scenes.length].start;parts.length=0;cur=-1;}
+function setPlaying(p){playing=p;playBtn.textContent=p?'pause':'play';}
+playBtn.onclick=()=>setPlaying(!playing);
+$('#restart').onclick=()=>{jump(0);setPlaying(true);};
+let keys='', toastT=0;
+addEventListener('keydown',e=>{
+  if(e.key===' '&&e.target.tagName!=='BUTTON'){e.preventDefault();setPlaying(!playing);}
+  else if(e.key==='ArrowRight')jump(cur+1);
+  else if(e.key==='ArrowLeft')jump(cur-1);
+  else if(/^[a-z]$/i.test(e.key)){keys=(keys+e.key.toLowerCase()).slice(-6);
+    if(keys==='banana'){bananaMode=!bananaMode;keys='';toast.textContent=bananaMode?'🍌 banana mode unlocked':'banana mode off';toast.hidden=false;toastT=3.5;}}
+});
+cv.addEventListener('pointerdown',e=>{
+  const r=cv.getBoundingClientRect(), x=e.clientX-r.left, y=e.clientY-r.top;
+  if(Math.hypot(x-orb.x,y-orb.y)<orb.r*1.3){orb.boop=.8;for(let i=0;i<6;i++)spawn({x:orb.x+rand(-20,20),y:orb.y-orb.r,vx:rand(-60,60),vy:-rand(60,140),g:60,text:'💜',size:Math.max(14,20*S),life:1.2,max:1.2});}
+});
+
+function resize(){
+  DPR=Math.min(2,devicePixelRatio||1); W=stage.clientWidth; H=stage.clientHeight;
+  cv.width=Math.round(W*DPR); cv.height=Math.round(H*DPR); ctx.setTransform(DPR,0,0,DPR,0,0);
+  TOP=$('#hud').offsetHeight+8; BOT=H-$('#capWrap').offsetHeight-8;
+  CX=W/2; CY=(TOP+BOT)/2; S=clamp(Math.min(W/1000,(BOT-TOP)/560),.4,1.3);
+  makeNeurons();
+}
+new ResizeObserver(resize).observe(stage);
+resize(); document.fonts&&document.fonts.ready.then(resize);
+
+/* ---------- loop ---------- */
+let last=performance.now(), rainT=0;
+function frame(now){
+  const rdt=Math.min(.05,(now-last)/1000); last=now;
+  const dt=playing?rdt:0;
+  time+=dt; clock+=dt; if(time>=TOTAL){time=0;parts.length=0;}
+  let idx=0; while(idx+1<scenes.length&&time>=scenes[idx+1].start) idx++;
+  const sc=scenes[idx];
+  if(idx!==cur){cur=idx;orb.shake=0;orb.talk=0;orb.ta=1;env.wipe=-1;sc.enter&&sc.enter();
+    label.textContent=String(idx+1).padStart(2,'0')+' · '+sc.name;
+    [...dots.children].forEach((b,i)=>{b.classList.toggle('on',i===idx);b.setAttribute('aria-current',i===idx?'step':'false');});}
+  const lt=time-sc.start;
+  ctx.fillStyle=C.ink; ctx.fillRect(0,0,W,H);
+  const vg=ctx.createRadialGradient(CX,CY,0,CX,CY,Math.max(W,H)*.7);
+  vg.addColorStop(0,'rgba(70,50,140,.22)'); vg.addColorStop(1,'rgba(70,50,140,0)');
+  ctx.fillStyle=vg; ctx.fillRect(0,0,W,H);
+  drawNeurons(dt);
+  sc.draw(lt,dt);
+  if(bananaMode&&playing){rainT-=dt;if(rainT<=0){rainT=.5;spawn({x:rand(0,W),y:-20,vy:rand(40,90),g:60*S,vr:rand(-3,3),text:'🍌',size:Math.max(16,24*S),life:6,max:6});}}
+  drawParts(dt);
+  drawOrb(dt,rdt);
+  let ci=0; while(ci+1<sc.caps.length&&lt>=sc.capT[ci+1]) ci++;
+  const full=capText(sc.caps[ci]), chars=Array.from(full);
+  const shown=chars.slice(0,Math.max(0,Math.floor((lt-sc.capT[ci])*45))).join('');
+  if(capEl.textContent!==shown) capEl.textContent=shown;
+  if(full!==lastCap){lastCap=full;live.textContent=full;}
+  prog.style.width=(time/TOTAL*100).toFixed(2)+'%';
+  if(toastT>0){toastT-=rdt;if(toastT<=0)toast.hidden=true;}
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+})();
+</script>
